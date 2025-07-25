@@ -285,6 +285,8 @@ def initialize_session_state():
         st.session_state.confirmed_rule = False
     if "active_tab" not in st.session_state:
         st.session_state.active_tab = "Simple Mode"
+    if "chat_input_key" not in st.session_state:
+        st.session_state.chat_input_key = 0
 
 def display_chat_message(role: str, content: str):
     """Display a chat message"""
@@ -405,9 +407,12 @@ def render_chat_interface():
     for message in st.session_state.messages:
         display_chat_message(message["role"], message["content"])
     
-    if prompt := st.chat_input("Type your message here..."):
+    # Use a unique key for each chat input
+    chat_key = f"chat_input_{st.session_state.chat_input_key}"
+    if prompt := st.chat_input("Type your message here...", key=chat_key):
         cleaned_prompt = clean_user_input(prompt)
         st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
+        st.session_state.chat_input_key += 1  # Force refresh of chat input
         
         if st.session_state.awaiting_structure_confirmation:
             if "yes" in cleaned_prompt.lower():
@@ -494,6 +499,7 @@ def main():
                     st.session_state.user_prompt = ""
                     reset_structure_state()
                     st.session_state.confirmed_rule = False
+                    st.session_state.chat_input_key += 1
                     st.rerun()
     
     with col2:
