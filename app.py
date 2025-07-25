@@ -760,6 +760,81 @@ def main():
     
     # Create tabs
     tab1, tab2 = st.tabs(["Simple Cases", "Complex Cases"])
+     with tab1:
+        # Simple Cases Tab
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Display rule UI
+            if st.session_state.current_rule_simple:
+                display_rule_ui_simple(st.session_state.current_rule_simple)
+                
+                # Show final JSON if confirmed
+                if st.session_state.confirmed_simple:
+                    st.success("✅ Final Rule Confirmed")
+                    st.json(st.session_state.current_rule_simple)
+                    
+                    # Add download button
+                    json_str = json.dumps(st.session_state.current_rule_simple, indent=2)
+                    st.download_button(
+                        label="Download Rule JSON",
+                        data=json_str,
+                        file_name=f"mortgage_rule_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        key="download_simple"
+                    )
+                    
+                    if st.button("Create New Rule", key="new_rule_simple"):
+                        # Reset for new rule
+                        st.session_state.messages_simple = [
+                            {"role": "assistant", "content": "Let's create a new rule. What criteria would you like to use?"}
+                        ]
+                        st.session_state.current_rule_simple = None
+                        st.session_state.confirmed_simple = False
+                        st.session_state.user_prompt_simple = ""
+                        st.rerun()
+        
+        with col2:
+            # Display chat messages
+            st.subheader("Rule Assistant")
+            
+            for message in st.session_state.messages_simple:
+                display_chat_message_simple(message["role"], message["content"])
+            
+            # Handle user input
+            if prompt := st.chat_input("Type your message here...", key="chat_input_simple"):
+                # Clean the user input first
+                cleaned_prompt = clean_user_input(prompt)
+                st.session_state.messages_simple.append({"role": "user", "content": cleaned_prompt})
+                display_chat_message_simple("user", cleaned_prompt)
+                
+                # Determine what to do based on current state
+                if not st.session_state.user_prompt_simple:
+                    # First prompt - generate initial rule
+                    st.session_state.user_prompt_simple = cleaned_prompt
+                    generate_new_rule_simple()
+                    st.rerun()
+                
+                elif st.session_state.awaiting_confirmation_simple:
+                    # User is responding to confirmation question
+                    if "yes" in cleaned_prompt.lower() or "correct" in cleaned_prompt.lower():
+                        handle_user_confirmation_simple(True)
+                    else:
+                        handle_user_confirmation_simple(False)
+                    st.rerun()
+                
+                elif st.session_state.awaiting_modification_simple:
+                    # User is providing modification details
+                    generate_new_rule_simple()
+                    st.rerun()
+                
+                else:
+                    # New conversation
+                    st.session_state.user_prompt_simple = cleaned_prompt
+                    st.session_state.current_rule_simple = None
+                    st.session_state.confirmed_simple = False
+                    generate_new_rule_simple()
+                    st.rerun()
     
     with tab2:
         # Complex Cases Tab
