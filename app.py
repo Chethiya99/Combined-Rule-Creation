@@ -834,8 +834,7 @@ def main():
                     st.session_state.current_rule_simple = None
                     st.session_state.confirmed_simple = False
                     generate_new_rule_simple()
-                    st.rerun() 
-     
+                    st.rerun()
     
     with tab2:
         # Complex Cases Tab
