@@ -760,7 +760,7 @@ def main():
     
     # Create tabs
     tab1, tab2 = st.tabs(["Simple Cases", "Complex Cases"])
-     with tab1:
+    with tab1:
         # Simple Cases Tab
         col1, col2 = st.columns([2, 1])
         
@@ -834,7 +834,8 @@ def main():
                     st.session_state.current_rule_simple = None
                     st.session_state.confirmed_simple = False
                     generate_new_rule_simple()
-                    st.rerun()
+                    st.rerun() 
+     
     
     with tab2:
         # Complex Cases Tab
