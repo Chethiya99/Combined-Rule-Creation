@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import openai
+from openai import OpenAI
 import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -9,48 +9,29 @@ import os
 # Initialize OpenAI client with connection test
 def initialize_openai():
     try:
-        openai.api_key = st.secrets["OPENAI_API_KEY"]
+        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         # Test connection with a small request
-        test_response = openai.ChatCompletion.create(
+        test_response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": "Say 'connected'"}],
             max_tokens=10
         )
         if "connected" not in test_response.choices[0].message.content.lower():
             raise Exception("Connection test failed")
-        return True
+        return client
     except Exception as e:
         st.error(f"Failed to initialize OpenAI client: {str(e)}")
         st.stop()
-        return False
+        return None
 
 # Initialize connection at startup
-if "openai_connected" not in st.session_state:
-    st.session_state.openai_connected = initialize_openai()
+if "openai_client" not in st.session_state:
+    st.session_state.openai_client = initialize_openai()
 
 # Define CSV file structures with exact column names
 CSV_STRUCTURES = {
     "sample_mortgage_accounts.csv": [
         "customer_id", "product_type", "account_status", "loan_open_date", "loan_balance"
-    ],
-    "sample_loan_repayments.csv": [
-        "repayment_id", "customer_id", "loan_account_number", "repayment_date",
-        "repayment_amount", "installment_number", "payment_method_status", "loan_type",
-        "interest_component", "principal_component", "remaining_balance"
-    ],
-    "sample_telco_billing.csv": [
-        "billing_id", "customer_id", "bill_date", "bill_amount", "plan_type",
-        "data_used_gb", "voice_minutes", "sms_count", "channel"
-    ],
-    "sample_product_enrollments.csv": [
-        "enrollment_id", "customer_id", "product_type", "product_name", "enrollment_date", "status"
-    ],
-    "sample_customer_profiles.csv": [
-        "customer_id", "name", "email", "phone", "dob", "gender",
-        "region", "segment", "household_id", "is_primary"
-    ],
-    "sample_savings_account_transactions.csv": [
-        "transaction_id", "account_id", "customer_id", "amount", "date", "transaction_type"
     ],
     "sample_credit_card_transactions.csv": [
         "customer_id", "card_number", "transaction_date", "transaction_amount", "transaction_type"
@@ -231,8 +212,8 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
     prompt = generate_prompt_guidance(user_input, modification_request)
     
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
+        response = st.session_state.openai_client.chat.completions.create(
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -265,15 +246,6 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
             st.error("The AI response contained invalid JSON. Please try again.")
             return None
             
-    except openai.error.AuthenticationError:
-        st.error("OpenAI authentication failed. Please check your API key.")
-        return None
-    except openai.error.RateLimitError:
-        st.error("Rate limit exceeded. Please wait a moment and try again.")
-        return None
-    except openai.error.APIError as e:
-        st.error(f"OpenAI API error: {str(e)}")
-        return None
     except Exception as e:
         st.error(f"Error generating rule: {str(e)}")
         return None
