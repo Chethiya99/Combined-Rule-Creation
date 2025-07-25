@@ -756,6 +756,7 @@ def main():
     """, unsafe_allow_html=True)
     
     # Initialize session states
+    initialize_session_state_simple()
     initialize_session_state_complex()
     
     # Create tabs
