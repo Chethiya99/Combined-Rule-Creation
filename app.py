@@ -6,12 +6,27 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
 
-# Initialize OpenAI client
-try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-except Exception as e:
-    st.error(f"Failed to initialize OpenAI client: {str(e)}")
-    st.stop()
+# Initialize OpenAI client with connection test
+def initialize_openai():
+    try:
+        openai.api_key = st.secrets["OPENAI_API_KEY"]
+        # Test connection with a small request
+        test_response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Say 'connected'"}],
+            max_tokens=10
+        )
+        if "connected" not in test_response.choices[0].message.content.lower():
+            raise Exception("Connection test failed")
+        return True
+    except Exception as e:
+        st.error(f"Failed to initialize OpenAI client: {str(e)}")
+        st.stop()
+        return False
+
+# Initialize connection at startup
+if "openai_connected" not in st.session_state:
+    st.session_state.openai_connected = initialize_openai()
 
 # Define CSV file structures with exact column names
 CSV_STRUCTURES = {
@@ -205,6 +220,14 @@ def validate_condition(condition: Dict[str, Any]) -> bool:
 
 def generate_rule_with_openai(user_input: str, modification_request: Optional[str] = None) -> Dict[str, Any]:
     """Generate rule using OpenAI with enhanced error handling"""
+    # First check if the input is too simple
+    if len(user_input.strip()) < 10:  # Very short inputs like "hi"
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Please provide specific criteria for mortgage holder rules. For example: 'Customers with active mortgages and credit card spending over $1000'"
+        })
+        return None
+    
     prompt = generate_prompt_guidance(user_input, modification_request)
     
     try:
@@ -233,7 +256,7 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
             
             # Validate the rule structure
             if not validate_rule_structure(rule):
-                st.error("Generated rule failed validation. Please check your input and try again.")
+                st.error("The generated rule didn't pass validation. Please try rephrasing your request.")
                 return None
                 
             return rule
@@ -242,8 +265,17 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
             st.error("The AI response contained invalid JSON. Please try again.")
             return None
             
+    except openai.error.AuthenticationError:
+        st.error("OpenAI authentication failed. Please check your API key.")
+        return None
+    except openai.error.RateLimitError:
+        st.error("Rate limit exceeded. Please wait a moment and try again.")
+        return None
+    except openai.error.APIError as e:
+        st.error(f"OpenAI API error: {str(e)}")
+        return None
     except Exception as e:
-        st.error(f"Error communicating with OpenAI: {str(e)}")
+        st.error(f"Error generating rule: {str(e)}")
         return None
 
 def display_rule_ui(rule: Dict[str, Any]) -> None:
@@ -324,7 +356,68 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
     for i, rule_item in enumerate(rule["rules"]):
         render_condition(rule_item, i)
 
-# [Rest of the functions (initialize_session_state, display_chat_message, etc.) remain the same as in previous version]
+def initialize_session_state():
+    """Initialize all session state variables"""
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Hello! I can help you create mortgage holder rules. What criteria would you like to use?"}
+        ]
+    if "current_rule" not in st.session_state:
+        st.session_state.current_rule = None
+    if "confirmed" not in st.session_state:
+        st.session_state.confirmed = False
+    if "user_prompt" not in st.session_state:
+        st.session_state.user_prompt = ""
+    if "awaiting_confirmation" not in st.session_state:
+        st.session_state.awaiting_confirmation = False
+    if "awaiting_modification" not in st.session_state:
+        st.session_state.awaiting_modification = False
+
+def display_chat_message(role: str, content: str):
+    """Display a chat message in the UI"""
+    with st.chat_message(role):
+        if role == "user":
+            content = clean_user_input(content)
+        st.markdown(content)
+
+def handle_user_confirmation(confirmation: bool):
+    """Handle user confirmation or modification request"""
+    if confirmation:
+        st.session_state.confirmed = True
+        st.session_state.awaiting_confirmation = False
+        st.session_state.messages.append({"role": "assistant", "content": "Great! Here's your final rule:"})
+    else:
+        st.session_state.awaiting_confirmation = False
+        st.session_state.awaiting_modification = True
+        st.session_state.messages.append({"role": "assistant", "content": "What changes would you like to make to the rule?"})
+
+def generate_new_rule():
+    """Generate a new rule based on current state"""
+    modification_request = None
+    if st.session_state.awaiting_modification and st.session_state.messages[-1]["role"] == "user":
+        modification_request = clean_user_input(st.session_state.messages[-1]["content"])
+    
+    with st.spinner("Generating rule..."):
+        new_rule = generate_rule_with_openai(
+            st.session_state.user_prompt,
+            modification_request
+        )
+        
+        if new_rule:
+            st.session_state.current_rule = new_rule
+            rule_preview = json.dumps(new_rule, indent=2)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements?"
+            })
+            st.session_state.awaiting_confirmation = True
+            st.session_state.awaiting_modification = False
+        else:
+            if not st.session_state.messages[-1]["content"].startswith("Please provide specific criteria"):
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "I couldn't generate a valid rule. Could you please provide more specific details about the criteria?"
+                })
 
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
@@ -405,4 +498,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
