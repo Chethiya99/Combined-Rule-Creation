@@ -55,6 +55,10 @@ def clean_user_input(text: str) -> str:
     text = ' '.join(text.split())
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
+def is_complex_prompt(user_input: str) -> bool:
+    """Check if the prompt contains multiple conditions with AND/OR"""
+    return " AND " in user_input.upper() or " OR " in user_input.upper()
+
 def generate_alternative_structures(user_input: str) -> List[str]:
     """Generate multiple possible logical structures from user input"""
     prompt = f"""
@@ -283,6 +287,10 @@ def initialize_session_state():
         st.session_state.confirmed_structure = ""
     if "confirmed_rule" not in st.session_state:
         st.session_state.confirmed_rule = False
+    if "awaiting_suggestion_preference" not in st.session_state:
+        st.session_state.awaiting_suggestion_preference = False
+    if "skip_suggestions" not in st.session_state:
+        st.session_state.skip_suggestions = False
 
 def display_chat_message(role: str, content: str):
     """Display a chat message"""
@@ -347,8 +355,22 @@ def generate_new_rule():
     if not st.session_state.user_prompt:
         return
     
-    # Step 1: Generate and confirm logical structure
-    if not st.session_state.proposed_structures and not st.session_state.confirmed_structure:
+    # Step 1: Check if we need to ask for suggestion preference
+    if not st.session_state.awaiting_suggestion_preference and is_complex_prompt(st.session_state.user_prompt):
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Your input contains multiple conditions. Would you like me to suggest possible logical groupings?",
+            "buttons": ["Want suggestions?", "No suggestions, please proceed"]
+        })
+        st.session_state.awaiting_suggestion_preference = True
+        return
+    
+    # Step 2: Generate and confirm logical structure (if suggestions requested)
+    if (st.session_state.awaiting_suggestion_preference and 
+        not st.session_state.proposed_structures and 
+        not st.session_state.skip_suggestions and
+        not st.session_state.confirmed_structure):
+        
         with st.spinner("Analyzing possible logical structures..."):
             st.session_state.proposed_structures = generate_alternative_structures(st.session_state.user_prompt)
             if st.session_state.proposed_structures:
@@ -356,15 +378,20 @@ def generate_new_rule():
             else:
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": "I couldn't interpret the logical structure. Please provide more specific requirements."
+                    "content": "I'll proceed directly to rule generation."
                 })
+                st.session_state.confirmed_structure = st.session_state.user_prompt
         return
     
-    # Step 2: Generate rule after structure confirmation
-    if st.session_state.confirmed_structure and not st.session_state.current_rule and not st.session_state.awaiting_rule_confirmation:
-        with st.spinner("Generating rule with confirmed structure..."):
+    # Step 3: Generate rule after structure confirmation
+    if (not st.session_state.current_rule and 
+        not st.session_state.awaiting_rule_confirmation and
+        (st.session_state.confirmed_structure or st.session_state.skip_suggestions)):
+        
+        logical_structure = st.session_state.confirmed_structure if st.session_state.confirmed_structure else st.session_state.user_prompt
+        with st.spinner("Generating rule..."):
             rule = generate_rule_with_openai(
-                st.session_state.confirmed_structure,
+                logical_structure,
                 st.session_state.user_prompt
             )
             if rule:
@@ -372,7 +399,7 @@ def generate_new_rule():
                 rule_preview = json.dumps(rule, indent=2)
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"I've generated this rule based on your confirmed structure:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
+                    "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
                 })
                 st.session_state.awaiting_rule_confirmation = True
             else:
@@ -400,6 +427,8 @@ def main():
             border-radius: 5px; 
             border-left: 4px solid #4285f4;
         }
+        .button-row { display: flex; gap: 10px; margin-top: 10px; }
+        .button-row button { flex: 1; }
     </style>
     """, unsafe_allow_html=True)
     
@@ -413,9 +442,13 @@ def main():
             
             if st.session_state.confirmed_rule:
                 st.success("✅ Final Rule Confirmed")
-                st.json(st.session_state.current_rule)
                 
+                # Display the JSON in a code block
+                st.subheader("Final Rule JSON")
                 json_str = json.dumps(st.session_state.current_rule, indent=2)
+                st.code(json_str, language="json")
+                
+                # Add download button
                 st.download_button(
                     label="Download Rule JSON",
                     data=json_str,
@@ -431,13 +464,31 @@ def main():
                     st.session_state.user_prompt = ""
                     reset_structure_state()
                     st.session_state.confirmed_rule = False
+                    st.session_state.skip_suggestions = False
+                    st.session_state.awaiting_suggestion_preference = False
                     st.rerun()
     
     with col2:
         st.subheader("Conversation")
         
         for message in st.session_state.messages:
-            display_chat_message(message["role"], message["content"])
+            if message.get("buttons"):
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button(message["buttons"][0]):
+                            st.session_state.messages.append({"role": "user", "content": message["buttons"][0]})
+                            st.session_state.awaiting_suggestion_preference = False
+                            st.rerun()
+                    with col2:
+                        if st.button(message["buttons"][1]):
+                            st.session_state.messages.append({"role": "user", "content": message["buttons"][1]})
+                            st.session_state.skip_suggestions = True
+                            st.session_state.awaiting_suggestion_preference = False
+                            st.rerun()
+            else:
+                display_chat_message(message["role"], message["content"])
         
         if prompt := st.chat_input("Type your message here..."):
             cleaned_prompt = clean_user_input(prompt)
@@ -462,7 +513,8 @@ def main():
                 st.session_state.current_rule = None
                 reset_structure_state()
                 st.session_state.confirmed_rule = False
-                generate_new_rule()
+                st.session_state.skip_suggestions = False
+                st.session_state.awaiting_suggestion_preference = False
                 st.rerun()
         
         generate_new_rule()
