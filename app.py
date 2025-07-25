@@ -55,6 +55,10 @@ def clean_user_input(text: str) -> str:
     text = ' '.join(text.split())
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
+def is_complex_prompt(user_input: str) -> bool:
+    """Check if the prompt contains multiple conditions with AND/OR"""
+    return " AND " in user_input.upper() or " OR " in user_input.upper()
+
 def generate_alternative_structures(user_input: str) -> List[str]:
     """Generate multiple possible logical structures from user input"""
     prompt = f"""
@@ -283,10 +287,12 @@ def initialize_session_state():
         st.session_state.confirmed_structure = ""
     if "confirmed_rule" not in st.session_state:
         st.session_state.confirmed_rule = False
-    if "active_tab" not in st.session_state:
-        st.session_state.active_tab = "Simple Mode"
-    if "chat_input_key" not in st.session_state:
-        st.session_state.chat_input_key = 0
+    if "awaiting_suggestion_preference" not in st.session_state:
+        st.session_state.awaiting_suggestion_preference = False
+    if "skip_suggestions" not in st.session_state:
+        st.session_state.skip_suggestions = False
+    if "last_user_input" not in st.session_state:
+        st.session_state.last_user_input = ""
 
 def display_chat_message(role: str, content: str):
     """Display a chat message"""
@@ -348,50 +354,59 @@ def reset_structure_state():
 
 def generate_new_rule():
     """Generate a new rule based on current state"""
-    if not st.session_state.user_prompt:
+    if not st.session_state.user_prompt or st.session_state.user_prompt == st.session_state.last_user_input:
         return
     
-    # Guided Mode: Generate and confirm logical structure
-    if st.session_state.active_tab == "Guided Mode":
-        if not st.session_state.proposed_structures and not st.session_state.confirmed_structure:
-            with st.spinner("Analyzing possible logical structures..."):
-                st.session_state.proposed_structures = generate_alternative_structures(st.session_state.user_prompt)
-                if st.session_state.proposed_structures:
-                    show_next_alternative()
-                else:
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": "I couldn't interpret the logical structure. Please provide more specific requirements."
-                    })
-            return
+    st.session_state.last_user_input = st.session_state.user_prompt
     
-    # Generate rule after structure confirmation (Guided) or directly (Simple)
-    if (st.session_state.active_tab == "Simple Mode" or 
-        (st.session_state.confirmed_structure and st.session_state.active_tab == "Guided Mode")) and \
-        not st.session_state.current_rule and not st.session_state.awaiting_rule_confirmation:
+    # Step 1: Check if we need to ask for suggestion preference
+    if (not st.session_state.awaiting_suggestion_preference and 
+        is_complex_prompt(st.session_state.user_prompt) and
+        not st.session_state.skip_suggestions and
+        not st.session_state.confirmed_structure):
         
-        with st.spinner("Generating rule..."):
-            # For Simple Mode, generate structure directly
-            if st.session_state.active_tab == "Simple Mode":
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Your input contains multiple conditions. Would you like me to suggest possible logical groupings?"
+        })
+        st.session_state.awaiting_suggestion_preference = True
+        return
+    
+    # Step 2: Generate and confirm logical structure (if suggestions requested)
+    if (st.session_state.awaiting_suggestion_preference and 
+        not st.session_state.proposed_structures and 
+        not st.session_state.skip_suggestions and
+        not st.session_state.confirmed_structure):
+        
+        with st.spinner("Analyzing possible logical structures..."):
+            st.session_state.proposed_structures = generate_alternative_structures(st.session_state.user_prompt)
+            if st.session_state.proposed_structures:
+                show_next_alternative()
+            else:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "I'll proceed directly to rule generation."
+                })
                 st.session_state.confirmed_structure = st.session_state.user_prompt
-            
+        return
+    
+    # Step 3: Generate rule after structure confirmation
+    if (not st.session_state.current_rule and 
+        not st.session_state.awaiting_rule_confirmation and
+        (st.session_state.confirmed_structure or st.session_state.skip_suggestions)):
+        
+        logical_structure = st.session_state.confirmed_structure if st.session_state.confirmed_structure else st.session_state.user_prompt
+        with st.spinner("Generating rule..."):
             rule = generate_rule_with_openai(
-                st.session_state.confirmed_structure,
+                logical_structure,
                 st.session_state.user_prompt
             )
-            
             if rule:
                 st.session_state.current_rule = rule
                 rule_preview = json.dumps(rule, indent=2)
-                
-                if st.session_state.active_tab == "Guided Mode":
-                    msg = f"I've generated this rule based on your confirmed structure:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
-                else:
-                    msg = f"I've generated this rule directly from your input:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
-                
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": msg
+                    "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
                 })
                 st.session_state.awaiting_rule_confirmation = True
             else:
@@ -399,44 +414,6 @@ def generate_new_rule():
                     "role": "assistant",
                     "content": "I couldn't generate a valid rule. Please provide more details."
                 })
-
-def render_chat_interface():
-    """Render the chat interface based on active tab"""
-    st.subheader("Conversation")
-    
-    for message in st.session_state.messages:
-        display_chat_message(message["role"], message["content"])
-    
-    # Use a unique key for each chat input
-    chat_key = f"chat_input_{st.session_state.chat_input_key}"
-    if prompt := st.chat_input("Type your message here...", key=chat_key):
-        cleaned_prompt = clean_user_input(prompt)
-        st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
-        st.session_state.chat_input_key += 1  # Force refresh of chat input
-        
-        if st.session_state.awaiting_structure_confirmation:
-            if "yes" in cleaned_prompt.lower():
-                handle_structure_confirmation(True)
-            elif "no" in cleaned_prompt.lower():
-                handle_structure_confirmation(False)
-            st.rerun()
-        
-        elif st.session_state.awaiting_rule_confirmation:
-            if "yes" in cleaned_prompt.lower():
-                handle_rule_confirmation(True)
-            elif "no" in cleaned_prompt.lower():
-                handle_rule_confirmation(False)
-            st.rerun()
-        
-        else:
-            st.session_state.user_prompt = cleaned_prompt
-            st.session_state.current_rule = None
-            reset_structure_state()
-            st.session_state.confirmed_rule = False
-            generate_new_rule()
-            st.rerun()
-    
-    generate_new_rule()
 
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
@@ -457,17 +434,8 @@ def main():
             border-radius: 5px; 
             border-left: 4px solid #4285f4;
         }
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 10px;
-        }
-        .stTabs [data-baseweb="tab"] {
-            padding: 8px 20px;
-            border-radius: 4px 4px 0 0;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #f0f2f6;
-            font-weight: 600;
-        }
+        .button-row { display: flex; gap: 10px; margin-top: 10px; }
+        .button-row button { flex: 1; }
     </style>
     """, unsafe_allow_html=True)
     
@@ -481,9 +449,13 @@ def main():
             
             if st.session_state.confirmed_rule:
                 st.success("✅ Final Rule Confirmed")
-                st.json(st.session_state.current_rule)
                 
+                # Display the JSON in a code block
+                st.subheader("Final Rule JSON")
                 json_str = json.dumps(st.session_state.current_rule, indent=2)
+                st.code(json_str, language="json")
+                
+                # Add download button
                 st.download_button(
                     label="Download Rule JSON",
                     data=json_str,
@@ -499,22 +471,63 @@ def main():
                     st.session_state.user_prompt = ""
                     reset_structure_state()
                     st.session_state.confirmed_rule = False
-                    st.session_state.chat_input_key += 1
+                    st.session_state.skip_suggestions = False
+                    st.session_state.awaiting_suggestion_preference = False
+                    st.session_state.last_user_input = ""
                     st.rerun()
     
     with col2:
-        # Tab selection
-        tab1, tab2 = st.tabs(["Simple Mode", "Guided Mode"])
+        st.subheader("Conversation")
         
-        with tab1:
-            st.session_state.active_tab = "Simple Mode"
-            st.info("💡 Use Simple Mode for straightforward rules without structural suggestions")
-            render_chat_interface()
+        for message in st.session_state.messages:
+            display_chat_message(message["role"], message["content"])
         
-        with tab2:
-            st.session_state.active_tab = "Guided Mode"
-            st.info("💡 Use Guided Mode for complex rules with multiple logical interpretations")
-            render_chat_interface()
+        # Show suggestion buttons if needed
+        if (st.session_state.awaiting_suggestion_preference and 
+            not st.session_state.proposed_structures and 
+            not st.session_state.skip_suggestions):
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Want suggestions?", key="suggestions_yes"):
+                    st.session_state.messages.append({"role": "user", "content": "Want suggestions?"})
+                    st.session_state.awaiting_suggestion_preference = False
+                    st.rerun()
+            with col2:
+                if st.button("No suggestions, please proceed", key="suggestions_no"):
+                    st.session_state.messages.append({"role": "user", "content": "No suggestions, please proceed"})
+                    st.session_state.skip_suggestions = True
+                    st.session_state.awaiting_suggestion_preference = False
+                    st.rerun()
+        
+        if prompt := st.chat_input("Type your message here..."):
+            cleaned_prompt = clean_user_input(prompt)
+            st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
+            st.session_state.user_prompt = cleaned_prompt
+            
+            if st.session_state.awaiting_structure_confirmation:
+                if "yes" in cleaned_prompt.lower():
+                    handle_structure_confirmation(True)
+                elif "no" in cleaned_prompt.lower():
+                    handle_structure_confirmation(False)
+                st.rerun()
+            
+            elif st.session_state.awaiting_rule_confirmation:
+                if "yes" in cleaned_prompt.lower():
+                    handle_rule_confirmation(True)
+                elif "no" in cleaned_prompt.lower():
+                    handle_rule_confirmation(False)
+                st.rerun()
+            
+            else:
+                st.session_state.current_rule = None
+                reset_structure_state()
+                st.session_state.confirmed_rule = False
+                st.session_state.skip_suggestions = False
+                st.session_state.awaiting_suggestion_preference = False
+                st.rerun()
+        
+        generate_new_rule()
 
 if __name__ == "__main__":
     main()
