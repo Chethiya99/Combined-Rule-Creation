@@ -408,7 +408,7 @@ def initialize_session_state(tab_prefix: str):
 def display_chat_message(role: str, content: str):
     """Display a chat message in the UI"""
     with st.chat_message(role):
-        st.markdown(clean_user_input(content) if role == "user" else content
+        st.markdown(clean_user_input(content)) if role == "user" else content
 
 def handle_user_confirmation(tab_prefix: str, confirmation: bool):
     """Handle user confirmation or modification request"""
