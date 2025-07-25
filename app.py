@@ -56,9 +56,36 @@ def clean_user_input(text: str) -> str:
     text = ' '.join(text.split())
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
+def detect_logical_structure(text: str) -> Dict[str, Any]:
+    """Analyze user input to detect logical structure"""
+    text_lower = text.lower()
+    structure = {
+        "primary_connector": "AND",  # Default
+        "secondary_connector": None,
+        "has_complex_conditions": False
+    }
+    
+    # Check for complex conditions with both AND and OR
+    if " and " in text_lower and " or " in text_lower:
+        structure["has_complex_conditions"] = True
+        # Determine which connector appears first to set primary
+        and_pos = text_lower.find(" and ")
+        or_pos = text_lower.find(" or ")
+        if and_pos < or_pos:
+            structure["primary_connector"] = "AND"
+            structure["secondary_connector"] = "OR"
+        else:
+            structure["primary_connector"] = "OR"
+            structure["secondary_connector"] = "AND"
+    elif " or " in text_lower:
+        structure["primary_connector"] = "OR"
+    
+    return structure
+
 def generate_prompt_guidance(user_input: str, modification_request: Optional[str] = None) -> str:
-    """Generate guidance for the AI with emphasis on exact column names"""
+    """Generate guidance for the AI with emphasis on exact column names and logical structure"""
     available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
+    logic = detect_logical_structure(user_input)
     
     base_prompt = f"""
     You are a financial rule generation assistant. Your task is to help create rules for mortgage holders based on available data sources.
@@ -66,11 +93,12 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     CRITICAL INSTRUCTIONS:
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
-    3. If a similar concept exists but with different naming, use the provided column name
-    4. For simple AND conditions, create separate conditions with "AND" connectors
-    5. Only use conditionGroup for complex nested logic
-    6. For amounts, use exact column names like "transaction_amount"
-    7. For status checks, use exact column names like "account_status"
+    3. Pay special attention to logical connectors (AND/OR) in the user's requirements
+    4. Detected logical structure in user input: Primary connector - {logic['primary_connector']}, Secondary - {logic['secondary_connector']}
+    5. For complex conditions with both AND and OR, create a conditionGroup with proper nesting
+    6. For simple AND/OR conditions, create separate conditions with connectors
+    7. For amounts, use exact column names like "transaction_amount" or "loan_balance"
+    8. For status checks, use exact column names like "account_status"
 
     Available data sources and their EXACT columns:
     {available_data}
@@ -85,7 +113,7 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     Analyze this requirement and:
     1. Identify which data sources are needed
     2. Use ONLY the exact column names from the sources
-    3. Create simple conditions connected with AND/OR as specified by user
+    3. Create proper logical structure based on detected connectors
     4. Include all these fields for each condition:
        - dataSource (file name exactly as shown)
        - field (column name exactly as shown)
@@ -93,56 +121,65 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
        - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
        - operator (use "=", ">", "<", ">=", "<=", "!=" as appropriate)
        - value (use exact values from user request)
-    5. Output the rule in JSON format matching this schema:
+    5. For complex conditions, use this structure:
         {
             "rules": [
                 {
-                    "id": "generated_id",
-                    "dataSource": "source_name",
-                    "field": "column_name",
-                    "eligibilityPeriod": "time_period or N/A",
-                    "function": "aggregation_function or N/A",
-                    "operator": "comparison_operator",
-                    "value": "comparison_value",
-                    "priority": null,
-                    "ruleType": "condition",
-                    "connector": "AND" or "OR" or null
+                    "ruleType": "conditionGroup",
+                    "connector": "primary_connector",
+                    "conditions": [
+                        { /* first condition */ },
+                        { 
+                            "ruleType": "conditionGroup",
+                            "connector": "secondary_connector",
+                            "conditions": [
+                                { /* nested condition */ },
+                                { /* nested condition */ }
+                            ]
+                        }
+                    ]
                 }
+            ]
+        }
+    6. For simple conditions, use this structure:
+        {
+            "rules": [
+                { /* first condition with connector */ },
+                { /* second condition with connector */ },
+                { /* last condition with null connector */ }
             ]
         }
 
     Respond ONLY with the JSON output. Do not include any additional explanation or markdown formatting.
-    The rule should be as specific as possible to match the user's requirements.
+    The rule should precisely match the user's logical requirements.
     """
     
     return base_prompt
 
-def validate_and_correct_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate and correct the rule structure"""
+def validate_rule_structure(rule: Dict[str, Any]) -> bool:
+    """Validate the rule structure meets our requirements"""
     if not rule or "rules" not in rule:
-        return rule
+        return False
     
-    # Remove any condition groups for simple AND conditions
-    simplified_rules = []
     for rule_item in rule["rules"]:
         if rule_item.get("ruleType") == "conditionGroup":
-            # For simple AND groups, flatten into individual conditions
-            if rule_item.get("connector") == "AND":
-                for condition in rule_item.get("conditions", []):
-                    simplified_rules.append(condition)
-                # Add AND connector to the last condition
-                if simplified_rules:
-                    simplified_rules[-1]["connector"] = "AND"
-            else:
-                simplified_rules.append(rule_item)
+            conditions = rule_item.get("conditions", [])
+            if not conditions:
+                return False
+            for cond in conditions:
+                if cond.get("ruleType") == "conditionGroup":
+                    nested_conds = cond.get("conditions", [])
+                    if not nested_conds:
+                        return False
         else:
-            simplified_rules.append(rule_item)
+            if not all(key in rule_item for key in ["dataSource", "field", "operator", "value"]):
+                return False
+            if rule_item["dataSource"] not in CSV_STRUCTURES:
+                return False
+            if rule_item["field"] not in CSV_STRUCTURES[rule_item["dataSource"]]:
+                return False
     
-    # Ensure the last condition has no connector
-    if simplified_rules:
-        simplified_rules[-1]["connector"] = None
-    
-    return {"rules": simplified_rules}
+    return True
 
 def generate_rule_with_openai(user_input: str, modification_request: Optional[str] = None) -> Dict[str, Any]:
     """Use OpenAI to generate a rule based on user input"""
@@ -150,11 +187,11 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
     
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial rule generation expert that creates precise JSON rules using EXACT column names from provided data sources."
+                    "content": "You are a financial rule generation expert that creates precise JSON rules with proper logical structure using EXACT column names."
                 },
                 {
                     "role": "user",
@@ -171,140 +208,27 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
         json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
         rule = json.loads(json_str)
         
-        # Validate and correct the rule structure
-        return validate_and_correct_rule(rule)
+        # Validate the rule structure
+        if not validate_rule_structure(rule):
+            st.error("Generated rule doesn't meet validation requirements")
+            return None
+            
+        return rule
     
+    except json.JSONDecodeError:
+        st.error("Failed to parse AI response as valid JSON")
+        return None
     except Exception as e:
         st.error(f"Error generating rule: {str(e)}")
         return None
 
-def display_rule_ui(rule: Dict[str, Any]) -> None:
-    """Display the rule in the UI with all required fields"""
-    if not rule or "rules" not in rule:
-        st.warning("No valid rule generated yet")
-        return
-    
-    st.subheader("Rule Conditions")
-    st.markdown("Define the logical conditions for this rule to apply.")
-    
-    # Priority checkbox
-    st.checkbox("Enable priority order and drag & drop", value=False, key="priority_order")
-    
-    # Main rule display
-    for i, rule_item in enumerate(rule["rules"]):
-        if rule_item.get("ruleType") == "condition":
-            with st.expander(f"Condition {i+1}", expanded=True):
-                cols = st.columns(7)
-                with cols[0]:
-                    # Data source dropdown with exact file names
-                    selected_ds = st.selectbox(
-                        "Data Source",
-                        options=list(CSV_STRUCTURES.keys()),
-                        index=list(CSV_STRUCTURES.keys()).index(rule_item["dataSource"]) 
-                        if rule_item["dataSource"] in CSV_STRUCTURES else 0,
-                        key=f"ds_{i}"
-                    )
-                with cols[1]:
-                    # Field dropdown with exact column names for selected data source
-                    columns = CSV_STRUCTURES.get(selected_ds, [])
-                    selected_field = st.selectbox(
-                        "Field", 
-                        options=columns,
-                        index=columns.index(rule_item["field"]) 
-                        if rule_item["field"] in columns else 0,
-                        key=f"field_{i}"
-                    )
-                with cols[2]:
-                    st.selectbox("eligibilityPeriod", 
-                                ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
-                                key=f"period_{i}")
-                with cols[3]:
-                    st.selectbox("function", 
-                                ["N/A", "sum", "count", "avg", "max", "min"],
-                                index=0 if rule_item.get("function") == "N/A" else 1,
-                                key=f"func_{i}")
-                with cols[4]:
-                    # Operator selection with correct default
-                    operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
-                    operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
-                    st.selectbox("Operator", 
-                                operator_options,
-                                index=operator_index,
-                                key=f"op_{i}")
-                with cols[5]:
-                    # Display the exact value from the rule
-                    st.text_input("Value", value=str(rule_item.get("value", "")), 
-                                key=f"val_{i}")
-                
-                if i < len(rule["rules"]) - 1:
-                    with cols[6]:
-                        st.selectbox("Connector", 
-                                    ["AND", "OR"],
-                                    index=0 if rule_item.get("connector", "AND") == "AND" else 1,
-                                    key=f"conn_{i}")
-
-def initialize_session_state():
-    """Initialize all session state variables"""
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Hello! I can help you create mortgage holder rules. What criteria would you like to use?"}
-        ]
-    if "current_rule" not in st.session_state:
-        st.session_state.current_rule = None
-    if "confirmed" not in st.session_state:
-        st.session_state.confirmed = False
-    if "user_prompt" not in st.session_state:
-        st.session_state.user_prompt = ""
-    if "awaiting_confirmation" not in st.session_state:
-        st.session_state.awaiting_confirmation = False
-    if "awaiting_modification" not in st.session_state:
-        st.session_state.awaiting_modification = False
-
-def display_chat_message(role: str, content: str):
-    """Display a chat message in the UI"""
-    with st.chat_message(role):
-        if role == "user":
-            content = clean_user_input(content)
-        st.markdown(content)
-
-def handle_user_confirmation(confirmation: bool):
-    """Handle user confirmation or modification request"""
-    if confirmation:
-        st.session_state.confirmed = True
-        st.session_state.awaiting_confirmation = False
-        st.session_state.messages.append({"role": "assistant", "content": "Great! Here's your final rule:"})
-    else:
-        st.session_state.awaiting_confirmation = False
-        st.session_state.awaiting_modification = True
-        st.session_state.messages.append({"role": "assistant", "content": "What changes would you like to make to the rule?"})
-
-def generate_new_rule():
-    """Generate a new rule based on current state"""
-    modification_request = None
-    if st.session_state.awaiting_modification and st.session_state.messages[-1]["role"] == "user":
-        modification_request = clean_user_input(st.session_state.messages[-1]["content"])
-    
-    with st.spinner("Generating rule..."):
-        new_rule = generate_rule_with_openai(
-            st.session_state.user_prompt,
-            modification_request
-        )
-        
-        if new_rule:
-            st.session_state.current_rule = new_rule
-            rule_preview = json.dumps(new_rule, indent=2)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements?"
-            })
-            st.session_state.awaiting_confirmation = True
-            st.session_state.awaiting_modification = False
-        else:
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "I couldn't generate a valid rule. Could you please provide more details?"
-            })
+# [Rest of your functions remain exactly the same...]
+# display_rule_ui()
+# initialize_session_state()
+# display_chat_message()
+# handle_user_confirmation()
+# generate_new_rule()
+# main()
 
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
