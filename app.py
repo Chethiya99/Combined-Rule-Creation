@@ -55,7 +55,7 @@ def clean_user_input(text: str) -> str:
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
 def generate_prompt_guidance(user_input: str, modification_request: Optional[str] = None) -> str:
-    """Generate guidance for the AI with emphasis on exact column names and condition groups"""
+    """Generate guidance for the AI with emphasis on exact column names and proper logical grouping"""
     available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
     
     base_prompt = f"""
@@ -65,10 +65,12 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
     3. If a similar concept exists but with different naming, use the provided column name
-    4. For simple AND/OR conditions, create separate conditions with appropriate connectors
-    5. For complex nested logic, use conditionGroup with proper nesting
+    4. You MUST properly group conditions according to standard mathematical logic (AND before OR)
+    5. Pay close attention to AND/OR conjunctions in the user's input to determine proper grouping
     6. For amounts, use exact column names like "transaction_amount"
     7. For status checks, use exact column names like "account_status"
+    8. For time references like "last month", use "Rolling 30 days" as eligibilityPeriod
+    9. For amount aggregations, use "sum" function where appropriate
 
     Available data sources and their EXACT columns:
     {available_data}
@@ -83,65 +85,84 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     Analyze this requirement and:
     1. Identify which data sources are needed
     2. Use ONLY the exact column names from the sources
-    3. Create conditions or condition groups as needed
-    4. Include all these fields for each condition:
-       - dataSource (file name exactly as shown)
-       - field (column name exactly as shown)
-       - eligibilityPeriod (use "Rolling 30 days" for time-based conditions, otherwise "N/A")
-       - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
-       - operator (use "=", ">", "<", ">=", "<=", "!=" as appropriate)
-       - value (use exact values from user request)
-    5. For condition groups, include:
-       - conditions (array of conditions or nested condition groups)
-       - connector ("AND" or "OR")
-    6. Output the rule in JSON format matching this schema:
-        {
-            "rules": [
-                {
-                    "id": "generated_id",
-                    "ruleType": "condition" or "conditionGroup",
-                    // For conditions:
-                    "dataSource": "source_name",
-                    "field": "column_name",
-                    "eligibilityPeriod": "time_period or N/A",
-                    "function": "aggregation_function or N/A",
-                    "operator": "comparison_operator",
-                    "value": "comparison_value",
-                    "priority": null,
-                    "connector": "AND" or "OR" or null
-                    // For condition groups:
-                    "conditions": [ array of conditions/groups ],
-                    "groupConnector": "AND" or "OR"
-                }
-            ]
-        }
+    3. Create conditions with proper logical grouping based on mathematical precedence
+    4. Structure the rule with proper condition groups that match the logical structure of the user's request
+    
+    Example for input "A AND B OR C":
+    {{
+        "rules": [
+            {{
+                "id": "group1",
+                "ruleType": "conditionGroup",
+                "groupConnector": "OR",
+                "conditions": [
+                    {{
+                        "id": "group2",
+                        "ruleType": "conditionGroup",
+                        "groupConnector": "AND",
+                        "conditions": [
+                            {{ /* Condition for A */ }},
+                            {{ /* Condition for B */ }}
+                        ]
+                    }},
+                    {{ /* Condition for C */ }}
+                ]
+            }}
+        ]
+    }}
+
+    Output the rule in JSON format matching this schema:
+    {{
+        "rules": [
+            {{
+                "id": "generated_id",
+                "ruleType": "condition" or "conditionGroup",
+                // For conditions:
+                "dataSource": "source_name",
+                "field": "column_name",
+                "eligibilityPeriod": "time_period or N/A",
+                "function": "aggregation_function or N/A",
+                "operator": "comparison_operator",
+                "value": "comparison_value",
+                "priority": null,
+                "connector": null
+                // For condition groups:
+                "conditions": [ array of conditions/groups ],
+                "groupConnector": "AND" or "OR"
+            }}
+        ]
+    }}
 
     Respond ONLY with the JSON output. Do not include any additional explanation or markdown formatting.
-    The rule should be as specific as possible to match the user's requirements.
     """
     
     return base_prompt
 
 def validate_and_correct_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate and correct the rule structure"""
+    """Validate and correct the rule structure with proper logical grouping"""
     if not rule or "rules" not in rule:
-        return rule
+        return {"rules": []}
     
     # Ensure all items have IDs and proper structure
-    for rule_item in rule["rules"]:
-        if "id" not in rule_item:
-            rule_item["id"] = str(uuid.uuid4())
-        
-        if rule_item.get("ruleType") == "conditionGroup":
-            if "conditions" not in rule_item:
-                rule_item["conditions"] = []
-            if "groupConnector" not in rule_item:
-                rule_item["groupConnector"] = "AND"
+    def process_items(items):
+        for item in items:
+            if "id" not in item:
+                item["id"] = str(uuid.uuid4())
+            if item.get("ruleType") == "conditionGroup":
+                if "conditions" not in item:
+                    item["conditions"] = []
+                if "groupConnector" not in item:
+                    item["groupConnector"] = "AND"
+                process_items(item["conditions"])
+            else:
+                if "connector" not in item:
+                    item["connector"] = None
     
+    process_items(rule["rules"])
     return rule
 
 def generate_rule_with_openai(user_input: str, modification_request: Optional[str] = None) -> Dict[str, Any]:
-    """Use OpenAI to generate a rule based on user input"""
+    """Use OpenAI to generate a rule with proper logical grouping"""
     prompt = generate_prompt_guidance(user_input, modification_request)
     
     try:
@@ -150,25 +171,27 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial rule generation expert that creates precise JSON rules using EXACT column names from provided data sources."
+                    "content": "You are a financial rule generation expert that creates precise JSON rules with proper logical grouping using EXACT column names."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.3,
+            temperature=0.2,
             response_format={"type": "json_object"}
         )
         
         response_content = response.choices[0].message.content
         
         # Clean the response to extract just the JSON
-        json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
-        rule = json.loads(json_str)
-        
-        # Validate and correct the rule structure
-        return validate_and_correct_rule(rule)
+        try:
+            json_str = response_content[response_content.find('{'):response_content.rfind('}')+1]
+            rule = json.loads(json_str)
+            return validate_and_correct_rule(rule)
+        except json.JSONDecodeError:
+            st.error("Failed to parse the AI response as JSON")
+            return None
     
     except Exception as e:
         st.error(f"Error generating rule: {str(e)}")
@@ -207,7 +230,6 @@ def render_condition(rule_item: Dict[str, Any], key_prefix: str = "") -> None:
                     index=0 if rule_item.get("function") == "N/A" else 1,
                     key=f"{key_prefix}_func")
     with cols[4]:
-        # Operator selection with correct default
         operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
         operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
         st.selectbox("Operator", 
@@ -215,38 +237,39 @@ def render_condition(rule_item: Dict[str, Any], key_prefix: str = "") -> None:
                     index=operator_index,
                     key=f"{key_prefix}_op")
     with cols[5]:
-        # Display the exact value from the rule
         st.text_input("Value", value=str(rule_item.get("value", "")), 
                     key=f"{key_prefix}_val")
     with cols[6]:
-        # Connector for conditions (not for the last item)
-        st.selectbox("Connector", 
-                    ["AND", "OR", "NONE"],
-                    index=0 if rule_item.get("connector", "AND") == "AND" else 
-                          (1 if rule_item.get("connector") == "OR" else 2),
-                    key=f"{key_prefix}_conn")
+        if rule_item.get("connector"):
+            st.selectbox("Connector", 
+                        ["AND", "OR"],
+                        index=0 if rule_item["connector"] == "AND" else 1,
+                        key=f"{key_prefix}_conn")
 
-def render_condition_group(group: Dict[str, Any], group_index: int) -> None:
+def render_condition_group(group: Dict[str, Any], group_index: int, parent_group: bool = False) -> None:
     """Render a condition group in the UI"""
     with st.expander(f"Condition Group {group_index + 1}", expanded=True):
         # Group connector selection
-        group_connector = st.selectbox(
-            "Group Connector",
-            ["AND", "OR"],
-            index=0 if group.get("groupConnector", "AND") == "AND" else 1,
-            key=f"group_{group_index}_connector"
-        )
+        if parent_group:
+            st.write(f"Group Connector: {group.get('groupConnector', 'AND')}")
+        else:
+            group_connector = st.selectbox(
+                "Group Connector",
+                ["AND", "OR"],
+                index=0 if group.get("groupConnector", "AND") == "AND" else 1,
+                key=f"group_{group['id']}_connector"
+            )
         
         # Render each condition in the group
         for i, condition in enumerate(group.get("conditions", [])):
             if condition.get("ruleType") == "condition":
-                render_condition(condition, key_prefix=f"group_{group_index}_cond_{i}")
+                render_condition(condition, key_prefix=f"group_{group['id']}_cond_{i}")
             elif condition.get("ruleType") == "conditionGroup":
                 render_condition_group(condition, i)
 
 def display_rule_ui(rule: Dict[str, Any]) -> None:
     """Display the rule in the UI with support for condition groups"""
-    if not rule or "rules" not in rule:
+    if not rule or "rules" not in rule or not rule["rules"]:
         st.warning("No valid rule generated yet")
         return
     
@@ -262,7 +285,7 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
             with st.expander(f"Condition {i+1}", expanded=True):
                 render_condition(rule_item, key_prefix=f"cond_{i}")
         elif rule_item.get("ruleType") == "conditionGroup":
-            render_condition_group(rule_item, i)
+            render_condition_group(rule_item, i, parent_group=True)
 
 def initialize_session_state():
     """Initialize all session state variables"""
@@ -305,7 +328,7 @@ def generate_new_rule():
     if st.session_state.awaiting_modification and st.session_state.messages[-1]["role"] == "user":
         modification_request = clean_user_input(st.session_state.messages[-1]["content"])
     
-    with st.spinner("Generating rule..."):
+    with st.spinner("Generating rule with proper logical grouping..."):
         new_rule = generate_rule_with_openai(
             st.session_state.user_prompt,
             modification_request
@@ -316,7 +339,7 @@ def generate_new_rule():
             rule_preview = json.dumps(new_rule, indent=2)
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements?"
+                "content": f"I've generated this rule with proper logical grouping:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements?"
             })
             st.session_state.awaiting_confirmation = True
             st.session_state.awaiting_modification = False
@@ -328,7 +351,7 @@ def generate_new_rule():
 
 def main():
     st.set_page_config(page_title="Mortgage Rule Generator", layout="wide")
-    st.title("🏦 Mortgage Rule Generator with GPT-4o")
+    st.title("🏦 Mortgage Rule Generator with GPT-4o (Logical Grouping)")
     
     # Custom CSS for better UI
     st.markdown("""
