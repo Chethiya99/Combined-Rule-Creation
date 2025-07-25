@@ -55,24 +55,25 @@ def clean_user_input(text: str) -> str:
     text = ' '.join(text.split())
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
-def extract_logical_structure(user_input: str) -> str:
-    """Extract and clarify the logical structure from user input"""
+def generate_alternative_structures(user_input: str) -> List[str]:
+    """Generate multiple possible logical structures from user input"""
     prompt = f"""
     The user provided this requirement: "{user_input}"
     
-    Analyze the logical structure and rewrite it in a clear format with proper parentheses showing the intended grouping.
-    Use only AND/OR operators and parentheses. Don't add any explanations.
+    Generate 3 different possible logical interpretations with proper parentheses showing different grouping possibilities.
+    Use only AND/OR operators and parentheses. Number each option.
     
     Example:
     Input: "A and B or C"
-    Output: "(A AND B) OR C"
-    
-    Input: "A or B and C"
-    Output: "A OR (B AND C)"
+    Output:
+    1. (A AND B) OR C
+    2. A AND (B OR C)
+    3. A AND B OR C
     
     Now process this input:
     Input: "{user_input}"
-    Output: """
+    Output:
+    """
     
     try:
         response = client.chat.completions.create(
@@ -80,27 +81,30 @@ def extract_logical_structure(user_input: str) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a logical expression analyzer. Your task is to rewrite expressions with proper parentheses."
+                    "content": "You generate multiple possible logical groupings for expressions."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.1,
-            max_tokens=100
+            temperature=0.7,
+            max_tokens=200
         )
-        return response.choices[0].message.content.strip()
+        output = response.choices[0].message.content.strip()
+        # Parse the numbered options
+        options = [line.split('. ', 1)[1] for line in output.split('\n') if '. ' in line]
+        return options[:3]  # Return up to 3 options
     except Exception as e:
-        st.error(f"Error analyzing logical structure: {str(e)}")
-        return user_input
+        st.error(f"Error generating alternatives: {str(e)}")
+        return [user_input]  # Fallback to original input
 
 def generate_prompt_guidance(logical_structure: str, user_input: str) -> str:
     """Generate guidance for the AI with proper logical grouping"""
     available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
     
     base_prompt = f"""
-    You are a financial rule generation assistant. Create rules based on this logical structure:
+    You are a financial rule generation assistant. Create rules based on this confirmed logical structure:
     {logical_structure}
     
     Original user requirement: "{user_input}"
@@ -271,8 +275,12 @@ def initialize_session_state():
         st.session_state.awaiting_structure_confirmation = False
     if "awaiting_rule_confirmation" not in st.session_state:
         st.session_state.awaiting_rule_confirmation = False
-    if "proposed_structure" not in st.session_state:
-        st.session_state.proposed_structure = ""
+    if "proposed_structures" not in st.session_state:
+        st.session_state.proposed_structures = []
+    if "current_structure_index" not in st.session_state:
+        st.session_state.current_structure_index = 0
+    if "confirmed_structure" not in st.session_state:
+        st.session_state.confirmed_structure = ""
     if "confirmed_rule" not in st.session_state:
         st.session_state.confirmed_rule = False
 
@@ -281,57 +289,82 @@ def display_chat_message(role: str, content: str):
     with st.chat_message(role):
         st.markdown(content)
 
-def handle_user_confirmation(confirmation: bool, confirmation_type: str):
-    """Handle user confirmation"""
-    if confirmation_type == "structure":
-        if confirmation:
-            st.session_state.awaiting_structure_confirmation = False
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"Great! Based on your confirmation, I'll generate rules for: {st.session_state.proposed_structure}"
-            })
+def handle_structure_confirmation(confirmation: bool):
+    """Handle user confirmation of logical structure"""
+    if confirmation:
+        st.session_state.confirmed_structure = st.session_state.proposed_structures[st.session_state.current_structure_index]
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"Great! I'll generate rules for this structure:\n\n```\n{st.session_state.confirmed_structure}\n```"
+        })
+        st.session_state.awaiting_structure_confirmation = False
+    else:
+        # Move to next alternative structure
+        st.session_state.current_structure_index += 1
+        if st.session_state.current_structure_index < len(st.session_state.proposed_structures):
+            show_next_alternative()
         else:
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "Please rephrase your requirements with clearer logical grouping."
+                "content": "I've shown all possible interpretations. Please rephrase your requirements with clearer logical grouping."
             })
             st.session_state.awaiting_structure_confirmation = False
-    elif confirmation_type == "rule":
-        if confirmation:
-            st.session_state.confirmed_rule = True
-            st.session_state.awaiting_rule_confirmation = False
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "Rule confirmed! Here's your final rule:"
-            })
-        else:
-            st.session_state.awaiting_rule_confirmation = False
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "What changes would you like to make to the rule?"
-            })
+            reset_structure_state()
+
+def handle_rule_confirmation(confirmation: bool):
+    """Handle user confirmation of generated rule"""
+    if confirmation:
+        st.session_state.confirmed_rule = True
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Rule confirmed! Here's your final rule:"
+        })
+    else:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "What changes would you like to make to the rule?"
+        })
+        st.session_state.current_rule = None
+    st.session_state.awaiting_rule_confirmation = False
+
+def show_next_alternative():
+    """Show the next alternative structure to the user"""
+    structure = st.session_state.proposed_structures[st.session_state.current_structure_index]
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": f"Does this structure match your intention?\n\n```\n{structure}\n```\n\nPlease respond with 'yes' or 'no'."
+    })
+    st.session_state.awaiting_structure_confirmation = True
+
+def reset_structure_state():
+    """Reset structure-related session state"""
+    st.session_state.proposed_structures = []
+    st.session_state.current_structure_index = 0
+    st.session_state.confirmed_structure = ""
 
 def generate_new_rule():
     """Generate a new rule based on current state"""
     if not st.session_state.user_prompt:
         return
     
-    # Step 1: Extract and confirm logical structure
-    if not st.session_state.proposed_structure:
-        with st.spinner("Analyzing logical structure..."):
-            st.session_state.proposed_structure = extract_logical_structure(st.session_state.user_prompt)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"To confirm, is this the logical structure you intended?\n\n```\n{st.session_state.proposed_structure}\n```\n\nPlease respond with 'yes' or 'no'."
-            })
-            st.session_state.awaiting_structure_confirmation = True
+    # Step 1: Generate and confirm logical structure
+    if not st.session_state.proposed_structures and not st.session_state.confirmed_structure:
+        with st.spinner("Analyzing possible logical structures..."):
+            st.session_state.proposed_structures = generate_alternative_structures(st.session_state.user_prompt)
+            if st.session_state.proposed_structures:
+                show_next_alternative()
+            else:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "I couldn't interpret the logical structure. Please provide more specific requirements."
+                })
         return
     
     # Step 2: Generate rule after structure confirmation
-    if not st.session_state.awaiting_rule_confirmation and not st.session_state.current_rule:
-        with st.spinner("Generating rule with proper grouping..."):
+    if st.session_state.confirmed_structure and not st.session_state.current_rule and not st.session_state.awaiting_rule_confirmation:
+        with st.spinner("Generating rule with confirmed structure..."):
             rule = generate_rule_with_openai(
-                st.session_state.proposed_structure,
+                st.session_state.confirmed_structure,
                 st.session_state.user_prompt
             )
             if rule:
@@ -339,7 +372,7 @@ def generate_new_rule():
                 rule_preview = json.dumps(rule, indent=2)
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"I've generated this rule:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
+                    "content": f"I've generated this rule based on your confirmed structure:\n\n```json\n{rule_preview}\n```\n\nDoes this meet your requirements? (yes/no)"
                 })
                 st.session_state.awaiting_rule_confirmation = True
             else:
@@ -360,6 +393,13 @@ def main():
         .assistant-message { background-color: #f0f2f6; }
         .user-message { background-color: #e3f2fd; }
         .stExpander { margin-bottom: 15px; border: 1px solid #e0e0e0; }
+        .structure-option { 
+            background-color: #f5f5f5; 
+            padding: 10px; 
+            margin: 5px 0; 
+            border-radius: 5px; 
+            border-left: 4px solid #4285f4;
+        }
     </style>
     """, unsafe_allow_html=True)
     
@@ -389,7 +429,7 @@ def main():
                     ]
                     st.session_state.current_rule = None
                     st.session_state.user_prompt = ""
-                    st.session_state.proposed_structure = ""
+                    reset_structure_state()
                     st.session_state.confirmed_rule = False
                     st.rerun()
     
@@ -405,24 +445,22 @@ def main():
             
             if st.session_state.awaiting_structure_confirmation:
                 if "yes" in cleaned_prompt.lower():
-                    handle_user_confirmation(True, "structure")
-                else:
-                    handle_user_confirmation(False, "structure")
-                    st.session_state.proposed_structure = ""
+                    handle_structure_confirmation(True)
+                elif "no" in cleaned_prompt.lower():
+                    handle_structure_confirmation(False)
                 st.rerun()
             
             elif st.session_state.awaiting_rule_confirmation:
                 if "yes" in cleaned_prompt.lower():
-                    handle_user_confirmation(True, "rule")
-                else:
-                    handle_user_confirmation(False, "rule")
-                    st.session_state.current_rule = None
+                    handle_rule_confirmation(True)
+                elif "no" in cleaned_prompt.lower():
+                    handle_rule_confirmation(False)
                 st.rerun()
             
             else:
                 st.session_state.user_prompt = cleaned_prompt
                 st.session_state.current_rule = None
-                st.session_state.proposed_structure = ""
+                reset_structure_state()
                 st.session_state.confirmed_rule = False
                 generate_new_rule()
                 st.rerun()
