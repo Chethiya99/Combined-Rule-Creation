@@ -2,9 +2,10 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import time
 from datetime import datetime
+import uuid
 
 # Initialize OpenAI client
 try:
@@ -54,7 +55,7 @@ def clean_user_input(text: str) -> str:
     return text.replace(" o n ", " on ").replace(" A N D ", " AND ").replace(" O R ", " OR ")
 
 def generate_prompt_guidance(user_input: str, modification_request: Optional[str] = None) -> str:
-    """Generate guidance for the AI with emphasis on exact column names"""
+    """Generate guidance for the AI with emphasis on exact column names and condition groups"""
     available_data = "\n".join([f"- {f}: {', '.join(cols)}" for f, cols in CSV_STRUCTURES.items()])
     
     base_prompt = f"""
@@ -64,8 +65,8 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     1. You MUST use ONLY the exact column names from the available data sources
     2. Field names are case-sensitive and must match exactly as provided
     3. If a similar concept exists but with different naming, use the provided column name
-    4. For simple AND conditions, create separate conditions with "AND" connectors
-    5. Only use conditionGroup for complex nested logic
+    4. For simple AND/OR conditions, create separate conditions with appropriate connectors
+    5. For complex nested logic, use conditionGroup with proper nesting
     6. For amounts, use exact column names like "transaction_amount"
     7. For status checks, use exact column names like "account_status"
 
@@ -82,7 +83,7 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
     Analyze this requirement and:
     1. Identify which data sources are needed
     2. Use ONLY the exact column names from the sources
-    3. Create simple conditions connected with AND/OR as specified by user
+    3. Create conditions or condition groups as needed
     4. Include all these fields for each condition:
        - dataSource (file name exactly as shown)
        - field (column name exactly as shown)
@@ -90,11 +91,16 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
        - function (use "sum", "count", "avg" where appropriate, otherwise "N/A")
        - operator (use "=", ">", "<", ">=", "<=", "!=" as appropriate)
        - value (use exact values from user request)
-    5. Output the rule in JSON format matching this schema:
+    5. For condition groups, include:
+       - conditions (array of conditions or nested condition groups)
+       - connector ("AND" or "OR")
+    6. Output the rule in JSON format matching this schema:
         {
             "rules": [
                 {
                     "id": "generated_id",
+                    "ruleType": "condition" or "conditionGroup",
+                    // For conditions:
                     "dataSource": "source_name",
                     "field": "column_name",
                     "eligibilityPeriod": "time_period or N/A",
@@ -102,8 +108,10 @@ def generate_prompt_guidance(user_input: str, modification_request: Optional[str
                     "operator": "comparison_operator",
                     "value": "comparison_value",
                     "priority": null,
-                    "ruleType": "condition",
                     "connector": "AND" or "OR" or null
+                    // For condition groups:
+                    "conditions": [ array of conditions/groups ],
+                    "groupConnector": "AND" or "OR"
                 }
             ]
         }
@@ -119,27 +127,18 @@ def validate_and_correct_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
     if not rule or "rules" not in rule:
         return rule
     
-    # Remove any condition groups for simple AND conditions
-    simplified_rules = []
+    # Ensure all items have IDs and proper structure
     for rule_item in rule["rules"]:
+        if "id" not in rule_item:
+            rule_item["id"] = str(uuid.uuid4())
+        
         if rule_item.get("ruleType") == "conditionGroup":
-            # For simple AND groups, flatten into individual conditions
-            if rule_item.get("connector") == "AND":
-                for condition in rule_item.get("conditions", []):
-                    simplified_rules.append(condition)
-                # Add AND connector to the last condition
-                if simplified_rules:
-                    simplified_rules[-1]["connector"] = "AND"
-            else:
-                simplified_rules.append(rule_item)
-        else:
-            simplified_rules.append(rule_item)
+            if "conditions" not in rule_item:
+                rule_item["conditions"] = []
+            if "groupConnector" not in rule_item:
+                rule_item["groupConnector"] = "AND"
     
-    # Ensure the last condition has no connector
-    if simplified_rules:
-        simplified_rules[-1]["connector"] = None
-    
-    return {"rules": simplified_rules}
+    return rule
 
 def generate_rule_with_openai(user_input: str, modification_request: Optional[str] = None) -> Dict[str, Any]:
     """Use OpenAI to generate a rule based on user input"""
@@ -175,8 +174,78 @@ def generate_rule_with_openai(user_input: str, modification_request: Optional[st
         st.error(f"Error generating rule: {str(e)}")
         return None
 
+def render_condition(rule_item: Dict[str, Any], key_prefix: str = "") -> None:
+    """Render a single condition in the UI"""
+    cols = st.columns(7)
+    with cols[0]:
+        # Data source dropdown with exact file names
+        selected_ds = st.selectbox(
+            "Data Source",
+            options=list(CSV_STRUCTURES.keys()),
+            index=list(CSV_STRUCTURES.keys()).index(rule_item["dataSource"]) 
+            if rule_item["dataSource"] in CSV_STRUCTURES else 0,
+            key=f"{key_prefix}_ds"
+        )
+    with cols[1]:
+        # Field dropdown with exact column names for selected data source
+        columns = CSV_STRUCTURES.get(selected_ds, [])
+        selected_field = st.selectbox(
+            "Field", 
+            options=columns,
+            index=columns.index(rule_item["field"]) 
+            if rule_item["field"] in columns else 0,
+            key=f"{key_prefix}_field"
+        )
+    with cols[2]:
+        st.selectbox("eligibilityPeriod", 
+                    ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
+                    index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
+                    key=f"{key_prefix}_period")
+    with cols[3]:
+        st.selectbox("function", 
+                    ["N/A", "sum", "count", "avg", "max", "min"],
+                    index=0 if rule_item.get("function") == "N/A" else 1,
+                    key=f"{key_prefix}_func")
+    with cols[4]:
+        # Operator selection with correct default
+        operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
+        operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
+        st.selectbox("Operator", 
+                    operator_options,
+                    index=operator_index,
+                    key=f"{key_prefix}_op")
+    with cols[5]:
+        # Display the exact value from the rule
+        st.text_input("Value", value=str(rule_item.get("value", "")), 
+                    key=f"{key_prefix}_val")
+    with cols[6]:
+        # Connector for conditions (not for the last item)
+        st.selectbox("Connector", 
+                    ["AND", "OR", "NONE"],
+                    index=0 if rule_item.get("connector", "AND") == "AND" else 
+                          (1 if rule_item.get("connector") == "OR" else 2),
+                    key=f"{key_prefix}_conn")
+
+def render_condition_group(group: Dict[str, Any], group_index: int) -> None:
+    """Render a condition group in the UI"""
+    with st.expander(f"Condition Group {group_index + 1}", expanded=True):
+        # Group connector selection
+        group_connector = st.selectbox(
+            "Group Connector",
+            ["AND", "OR"],
+            index=0 if group.get("groupConnector", "AND") == "AND" else 1,
+            key=f"group_{group_index}_connector"
+        )
+        
+        # Render each condition in the group
+        for i, condition in enumerate(group.get("conditions", [])):
+            if condition.get("ruleType") == "condition":
+                render_condition(condition, key_prefix=f"group_{group_index}_cond_{i}")
+            elif condition.get("ruleType") == "conditionGroup":
+                render_condition_group(condition, i)
+
 def display_rule_ui(rule: Dict[str, Any]) -> None:
-    """Display the rule in the UI with all required fields"""
+    """Display the rule in the UI with support for condition groups"""
     if not rule or "rules" not in rule:
         st.warning("No valid rule generated yet")
         return
@@ -191,55 +260,9 @@ def display_rule_ui(rule: Dict[str, Any]) -> None:
     for i, rule_item in enumerate(rule["rules"]):
         if rule_item.get("ruleType") == "condition":
             with st.expander(f"Condition {i+1}", expanded=True):
-                cols = st.columns(7)
-                with cols[0]:
-                    # Data source dropdown with exact file names
-                    selected_ds = st.selectbox(
-                        "Data Source",
-                        options=list(CSV_STRUCTURES.keys()),
-                        index=list(CSV_STRUCTURES.keys()).index(rule_item["dataSource"]) 
-                        if rule_item["dataSource"] in CSV_STRUCTURES else 0,
-                        key=f"ds_{i}"
-                    )
-                with cols[1]:
-                    # Field dropdown with exact column names for selected data source
-                    columns = CSV_STRUCTURES.get(selected_ds, [])
-                    selected_field = st.selectbox(
-                        "Field", 
-                        options=columns,
-                        index=columns.index(rule_item["field"]) 
-                        if rule_item["field"] in columns else 0,
-                        key=f"field_{i}"
-                    )
-                with cols[2]:
-                    st.selectbox("eligibilityPeriod", 
-                                ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
-                                index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
-                                key=f"period_{i}")
-                with cols[3]:
-                    st.selectbox("function", 
-                                ["N/A", "sum", "count", "avg", "max", "min"],
-                                index=0 if rule_item.get("function") == "N/A" else 1,
-                                key=f"func_{i}")
-                with cols[4]:
-                    # Operator selection with correct default
-                    operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
-                    operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
-                    st.selectbox("Operator", 
-                                operator_options,
-                                index=operator_index,
-                                key=f"op_{i}")
-                with cols[5]:
-                    # Display the exact value from the rule
-                    st.text_input("Value", value=str(rule_item.get("value", "")), 
-                                key=f"val_{i}")
-                
-                if i < len(rule["rules"]) - 1:
-                    with cols[6]:
-                        st.selectbox("Connector", 
-                                    ["AND", "OR"],
-                                    index=0 if rule_item.get("connector", "AND") == "AND" else 1,
-                                    key=f"conn_{i}")
+                render_condition(rule_item, key_prefix=f"cond_{i}")
+        elif rule_item.get("ruleType") == "conditionGroup":
+            render_condition_group(rule_item, i)
 
 def initialize_session_state():
     """Initialize all session state variables"""
@@ -336,6 +359,12 @@ def main():
             font-weight: bold;
             background-color: #f5f5f5;
             padding: 10px 15px;
+        }
+        .condition-group {
+            border-left: 4px solid #4285f4;
+            padding-left: 12px;
+            margin-left: 8px;
+            margin-bottom: 15px;
         }
     </style>
     """, unsafe_allow_html=True)
