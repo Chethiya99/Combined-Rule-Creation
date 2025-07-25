@@ -189,7 +189,7 @@ def render_condition_simple(rule_item: Dict[str, Any], key_prefix: str = "") -> 
             options=list(CSV_STRUCTURES.keys()),
             index=list(CSV_STRUCTURES.keys()).index(rule_item["dataSource"]) 
             if rule_item["dataSource"] in CSV_STRUCTURES else 0,
-            key=f"{key_prefix}_ds"
+            key=f"{key_prefix}_ds_simple"
         )
     with cols[1]:
         # Field dropdown with exact column names for selected data source
@@ -199,18 +199,18 @@ def render_condition_simple(rule_item: Dict[str, Any], key_prefix: str = "") -> 
             options=columns,
             index=columns.index(rule_item["field"]) 
             if rule_item["field"] in columns else 0,
-            key=f"{key_prefix}_field"
+            key=f"{key_prefix}_field_simple"
         )
     with cols[2]:
         st.selectbox("eligibilityPeriod", 
                     ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days", "Current month"],
                     index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
-                    key=f"{key_prefix}_period")
+                    key=f"{key_prefix}_period_simple")
     with cols[3]:
         st.selectbox("function", 
                     ["N/A", "sum", "count", "avg", "max", "min"],
                     index=0 if rule_item.get("function") == "N/A" else 1,
-                    key=f"{key_prefix}_func")
+                    key=f"{key_prefix}_func_simple")
     with cols[4]:
         # Operator selection with correct default
         operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
@@ -218,18 +218,18 @@ def render_condition_simple(rule_item: Dict[str, Any], key_prefix: str = "") -> 
         st.selectbox("Operator", 
                     operator_options,
                     index=operator_index,
-                    key=f"{key_prefix}_op")
+                    key=f"{key_prefix}_op_simple")
     with cols[5]:
         # Display the exact value from the rule
         st.text_input("Value", value=str(rule_item.get("value", "")), 
-                    key=f"{key_prefix}_val")
+                    key=f"{key_prefix}_val_simple")
     with cols[6]:
         # Connector for conditions (not for the last item)
         st.selectbox("Connector", 
                     ["AND", "OR", "NONE"],
                     index=0 if rule_item.get("connector", "AND") == "AND" else 
                           (1 if rule_item.get("connector") == "OR" else 2),
-                    key=f"{key_prefix}_conn")
+                    key=f"{key_prefix}_conn_simple")
 
 def render_condition_group_simple(group: Dict[str, Any], group_index: int) -> None:
     """Render a condition group in the UI"""
@@ -239,13 +239,13 @@ def render_condition_group_simple(group: Dict[str, Any], group_index: int) -> No
             "Group Connector",
             ["AND", "OR"],
             index=0 if group.get("groupConnector", "AND") == "AND" else 1,
-            key=f"group_{group_index}_connector"
+            key=f"group_{group_index}_connector_simple"
         )
         
         # Render each condition in the group
         for i, condition in enumerate(group.get("conditions", [])):
             if condition.get("ruleType") == "condition":
-                render_condition_simple(condition, key_prefix=f"group_{group_index}_cond_{i}")
+                render_condition_simple(condition, key_prefix=f"group_{group_index}_cond_{i}_simple")
             elif condition.get("ruleType") == "conditionGroup":
                 render_condition_group_simple(condition, i)
 
@@ -259,13 +259,13 @@ def display_rule_ui_simple(rule: Dict[str, Any]) -> None:
     st.markdown("Define the logical conditions for this rule to apply.")
     
     # Priority checkbox
-    st.checkbox("Enable priority order and drag & drop", value=False, key="priority_order")
+    st.checkbox("Enable priority order and drag & drop", value=False, key="priority_order_simple")
     
     # Main rule display
     for i, rule_item in enumerate(rule["rules"]):
         if rule_item.get("ruleType") == "condition":
             with st.expander(f"Condition {i+1}", expanded=True):
-                render_condition_simple(rule_item, key_prefix=f"cond_{i}")
+                render_condition_simple(rule_item, key_prefix=f"cond_{i}_simple")
         elif rule_item.get("ruleType") == "conditionGroup":
             render_condition_group_simple(rule_item, i)
 
@@ -478,7 +478,7 @@ def render_condition_complex(rule_item: Dict[str, Any], key_prefix: str = "") ->
             options=list(CSV_STRUCTURES.keys()),
             index=list(CSV_STRUCTURES.keys()).index(rule_item["dataSource"]) 
             if rule_item["dataSource"] in CSV_STRUCTURES else 0,
-            key=f"{key_prefix}_ds"
+            key=f"{key_prefix}_ds_complex"
         )
     with cols[1]:
         columns = CSV_STRUCTURES.get(selected_ds, [])
@@ -487,41 +487,41 @@ def render_condition_complex(rule_item: Dict[str, Any], key_prefix: str = "") ->
             options=columns,
             index=columns.index(rule_item["field"]) 
             if rule_item["field"] in columns else 0,
-            key=f"{key_prefix}_field"
+            key=f"{key_prefix}_field_complex"
         )
     with cols[2]:
         st.selectbox("eligibilityPeriod", 
                     ["N/A", "Rolling 30 days", "Rolling 60 days", "Rolling 90 days"],
                     index=0 if rule_item.get("eligibilityPeriod") == "N/A" else 1,
-                    key=f"{key_prefix}_period")
+                    key=f"{key_prefix}_period_complex")
     with cols[3]:
         st.selectbox("function", 
                     ["N/A", "sum", "count", "avg", "max", "min"],
                     index=0 if rule_item.get("function") == "N/A" else 1,
-                    key=f"{key_prefix}_func")
+                    key=f"{key_prefix}_func_complex")
     with cols[4]:
         operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains","Between"]
         operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
         st.selectbox("Operator", 
                     operator_options,
                     index=operator_index,
-                    key=f"{key_prefix}_op")
+                    key=f"{key_prefix}_op_complex")
     with cols[5]:
         st.text_input("Value", value=str(rule_item.get("value", "")), 
-                    key=f"{key_prefix}_val")
+                    key=f"{key_prefix}_val_complex")
     with cols[6]:
         if rule_item.get("connector"):
             st.selectbox("Connector", 
                         ["AND", "OR"],
                         index=0 if rule_item["connector"] == "AND" else 1,
-                        key=f"{key_prefix}_conn")
+                        key=f"{key_prefix}_conn_complex")
 
 def render_condition_group_complex(group: Dict[str, Any], group_index: int) -> None:
     """Render a condition group in the UI"""
     with st.expander(f"Group {group_index + 1} ({group['groupConnector']})", expanded=True):
         for i, condition in enumerate(group.get("conditions", [])):
             if condition.get("ruleType") == "condition":
-                render_condition_complex(condition, key_prefix=f"group_{group['id']}_cond_{i}")
+                render_condition_complex(condition, key_prefix=f"group_{group['id']}_cond_{i}_complex")
             elif condition.get("ruleType") == "conditionGroup":
                 render_condition_group_complex(condition, i)
 
@@ -537,7 +537,7 @@ def display_rule_ui_complex(rule: Dict[str, Any]) -> None:
     for i, rule_item in enumerate(rule["rules"]):
         if rule_item.get("ruleType") == "condition":
             with st.expander(f"Condition {i+1}", expanded=True):
-                render_condition_complex(rule_item, key_prefix=f"cond_{i}")
+                render_condition_complex(rule_item, key_prefix=f"cond_{i}_complex")
         elif rule_item.get("ruleType") == "conditionGroup":
             render_condition_group_complex(rule_item, i)
 
@@ -745,7 +745,8 @@ def main():
                         label="Download Rule JSON",
                         data=json_str,
                         file_name=f"mortgage_rule_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json"
+                        mime="application/json",
+                        key="download_simple"
                     )
                     
                     if st.button("Create New Rule", key="new_rule_simple"):
