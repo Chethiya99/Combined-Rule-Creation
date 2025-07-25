@@ -220,7 +220,7 @@ def render_condition(rule_item: Dict[str, Any], key_prefix: str = "") -> None:
                     index=0 if rule_item.get("function") == "N/A" else 1,
                     key=f"{key_prefix}_func")
     with cols[4]:
-        operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains"]
+        operator_options = ["=", ">", "<", ">=", "<=", "!=", "contains","Between"]
         operator_index = operator_options.index(rule_item["operator"]) if rule_item["operator"] in operator_options else 0
         st.selectbox("Operator", 
                     operator_options,
