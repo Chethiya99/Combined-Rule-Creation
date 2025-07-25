@@ -1,0 +1,11 @@
+enrollment_id,customer_id,product_type,product_name,enrollment_date,status
+ENR00001,CUST001,investment,GrowFund,2025-07-14 16:58:16.796266,inactive
+ENR00002,CUST002,savings,SaverX,2025-07-15 16:58:16.796266,active
+ENR00003,CUST003,investment,GrowFund,2025-07-16 16:58:16.796266,inactive
+ENR00004,CUST004,insurance,SaverX,2025-07-17 16:58:16.796266,inactive
+ENR00005,CUST005,investment,GrowFund,2025-07-18 16:58:16.796266,inactive
+ENR00006,CUST006,investment,SaverX,2025-07-19 16:58:16.796266,active
+ENR00007,CUST007,insurance,GrowFund,2025-07-20 16:58:16.796266,inactive
+ENR00008,CUST008,insurance,HealthPlus,2025-07-21 16:58:16.796266,active
+ENR00009,CUST009,investment,GrowFund,2025-07-22 16:58:16.796266,active
+ENR00010,CUST010,savings,SaverX,2025-07-23 16:58:16.796266,inactive

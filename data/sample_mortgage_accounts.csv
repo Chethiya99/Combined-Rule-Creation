@@ -1,0 +1,4 @@
+customer_id,product_type,account_status,loan_open_date,loan_balance
+CUST001,mortgage,active,2024-06-18 08:34:08.043959,250000.0
+CUST002,mortgage,closed,2023-12-01 08:34:08.043977,0.0
+CUST004,mortgage,active,2024-09-26 08:34:08.043982,175000.0

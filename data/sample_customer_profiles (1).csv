@@ -1,0 +1,11 @@
+customer_id,name,email,phone,dob,gender,region,segment,household_id,is_primary
+CUST001,Customer 1,user1@example.com,0770000001,1980-12-31,Female,Kandy,Mass,HH001,True
+CUST002,Customer 2,user2@example.com,0770000002,1985-12-31,Female,Galle,Premier,HH001,False
+CUST003,Customer 3,user3@example.com,0770000003,1990-12-31,Female,Galle,Premier,HH002,True
+CUST004,Customer 4,user4@example.com,0770000004,1995-12-31,Female,Galle,Affluent,HH002,False
+CUST005,Customer 5,user5@example.com,0770000005,2000-12-31,Male,Kandy,Affluent,HH003,True
+CUST006,Customer 6,user6@example.com,0770000006,2005-12-31,Male,Colombo,Mass,HH003,False
+CUST007,Customer 7,user7@example.com,0770000007,2010-12-31,Male,Kandy,Premier,HH004,True
+CUST008,Customer 8,user8@example.com,0770000008,2015-12-31,Female,Colombo,Affluent,HH004,False
+CUST009,Customer 9,user9@example.com,0770000009,2020-12-31,Male,Kandy,Affluent,HH005,True
+CUST010,Customer 10,user10@example.com,0770000010,2025-12-31,Male,Colombo,Affluent,HH005,False

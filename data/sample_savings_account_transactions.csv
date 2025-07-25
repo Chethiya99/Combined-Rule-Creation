@@ -1,0 +1,11 @@
+transaction_id,customer_id,account_number,transaction_date,transaction_amount,transaction_type,transaction_mode,narration,currency,branch_code,account_type,channel
+TXN00001,CUST001,SAV100001,2025-07-14 16:56:15.786110,270,debit,Cash,Salary,LKR,BR001,savings,branch
+TXN00002,CUST002,SAV100002,2025-07-15 16:56:15.786110,1049,credit,Cash,Bill Payment,LKR,BR002,savings,mobile
+TXN00003,CUST003,SAV100003,2025-07-16 16:56:15.786110,1295,debit,NEFT,Salary,LKR,BR003,savings,branch
+TXN00004,CUST004,SAV100004,2025-07-17 16:56:15.786110,1044,credit,UPI,Deposit,LKR,BR004,savings,branch
+TXN00005,CUST005,SAV100005,2025-07-18 16:56:15.786110,420,credit,UPI,Transfer,LKR,BR005,savings,internet
+TXN00006,CUST006,SAV100006,2025-07-19 16:56:15.786110,601,credit,Cash,Bill Payment,LKR,BR006,savings,mobile
+TXN00007,CUST007,SAV100007,2025-07-20 16:56:15.786110,1403,debit,UPI,Bill Payment,LKR,BR007,savings,internet
+TXN00008,CUST008,SAV100008,2025-07-21 16:56:15.786110,394,debit,NEFT,Deposit,LKR,BR008,savings,internet
+TXN00009,CUST009,SAV100009,2025-07-22 16:56:15.786110,307,credit,UPI,Transfer,LKR,BR009,savings,mobile
+TXN00010,CUST010,SAV100010,2025-07-23 16:56:15.786110,317,credit,NEFT,Transfer,LKR,BR010,savings,internet
