@@ -152,7 +152,7 @@ def generate_rule_openai(user_input: str, modification_request: Optional[str] = 
     
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a financial rule generation expert."},
                 {"role": "user", "content": prompt}
